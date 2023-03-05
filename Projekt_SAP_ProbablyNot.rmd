@@ -1,0 +1,490 @@
+---
+title: 'Projekt: Statistika nogometaša engleske Premier lige'
+author: "Ana Knezović, Jan Ljubas, Ivan Milinović, Stela Periš"
+date: "2023-1-15"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo = FALSE}
+library(dplyr)
+```
+
+```{r echo=FALSE}
+
+#read.csv('columns.txt', header = TRUE, fileEncoding = "UTF-8-BOM")
+data = read.csv('datasets/data.csv', header= TRUE)
+
+data_matrix <- matrix(0, nrow = 691, ncol = 30)  # izrada matrice kao pomocne strukture podataka
+for (i in 1:691) {
+  a = data[i, ]
+  for (j in 1:30) {
+    val = a[[j]]
+    data_matrix[i,j] = val
+  }
+}
+```
+
+# 1.Postoji li razlika u broju odigranih minuta mladih igrača (do 25 godina) medu premierligaškim ekipama?
+
+U svrhu lakšeg razumijevanja problematike zadatka (i jasnoće teksta čitateljima), odlučili smo vizualizirati problem i podatke s kojima baratamo.
+\vspace{2cm}
+
+```{r}
+lista_svih_meanova = rep(0, 20)  # nakon izračunatog prosjeka minuta mladih igrača za ekipu,
+# rezultat se pohranjuje u ovu listu
+imena_klubova <- list()
+
+for (i in data$Team) {
+  if ( !(i %in% imena_klubova) ) {
+    imena_klubova <- append(imena_klubova, i, after = length(imena_klubova) )
+  }
+}
+
+```
+
+```{r}
+
+# data[i, ]  == i-ti redak
+# data[i, j] == i×j element matrice
+# data[,1] ==> data$Player
+
+
+# data_matrix[1, ] -> redak matrice
+# data_matrix[, 1] -> stupac matrice
+######################################
+
+  for (i1 in 1:20) {    # prolazimo kroz svih 20 ekipa
+  
+    zbroj = 0           # zbroj minuta mladih igraca trenutne ekipe
+    duljina = 0         # broj mladih igraca cije minute akumuliramo
+    
+    
+    for (j in 1:691) {  # iteriranje po igracima
+      
+      r = data_matrix[j, ]           # redak matrice -> svi podatci o igraču
+      
+      if (! is.na(r[5])) {
+        
+        if ( r[2] == imena_klubova[i1] & r[5] <= 25) {  
+          # uvjet: igrač je iz traženog kluba i mlađi je od 25 godina
+        
+          duljina = duljina + 1
+          broj = r[8]                   # izvlačenje podatka o broju odigranih minuta
+          broj <- gsub(",", "", broj)   # micanje zareza iz zapisa broja
+          if (broj != "") {
+            broj <- as.numeric(broj)    # promjena char -> numeric
+            zbroj = zbroj + broj
+          }
+        }
+      }
+      
+      avg = zbroj / duljina             # računanje prosjeka
+      lista_svih_meanova[i1] = avg      # uvrštavanje u listu svih prosjeka
+    }
+  }
+  
+  avg_mladi = mean(lista_svih_meanova)
+
+plot(lista_svih_meanova,
+     main = "Prosječni broj odigranih minuta mladih igrača po timu",
+     xlab = "",
+     ylab = "prosječni broj minuta",
+     col = ifelse( lista_svih_meanova < avg_mladi, 'red', 'blue'),
+     xaxt = 'n',
+     las = 1
+    )
+axis( 1, at = c(1:20), labels = imena_klubova, las = 2 )
+
+```
+
+
+U gornjem dotplotu grafički su prikazani podatci iz kojih trebamo donijeti statističke zaključke. Makar je grafički prikaz uvijek dobro koristiti kao pomoć, samo na temelju njega ne možemo pouzdano donositi zaključke, za razliku od matematički rigoroznih metoda i postupaka.
+
+#### U svrhu nalaženja odgovora na zadano pitanje, provođenje testova nad hipotezama moglo bi se ostvariti metodom analize varijance.
+
+\newpage
+
+Valja provjeriti vrijedi li skup pretpostavki koji činimo prije ANOVA testiranja - približna normalnost uzoraka, donja granica broja traženih igrača po svakom uzorku, jednakost varijanci uzoraka (homoskedastičnost), ...
+\vspace{2cm}
+
+
+
+```{r}
+
+data %>% mutate(Min = gsub(",", "", Min)) %>% filter(Age <= 25 & !is.na(Team) & !is.na(Min) ) %>% select(Player, Min, Team) %>% mutate( Min = as.numeric(Min), Team)  -> data_za_homoskedasticnost
+  
+# data_za_homoskedasticnost
+  
+bartlett.test(data_za_homoskedasticnost$Min~data_za_homoskedasticnost$Team)
+
+```
+
+Iz rezultata Bartlettovog testa očekujemo da su podatci dovoljno homoskedastični za primjenu ANOVA metode.
+
+\vspace{1cm}
+
+```{r}
+ifelse(! nrow(data_za_homoskedasticnost %>% group_by(Team) %>% summarize(count = n()) %>% filter(count < 5))>0,"Dovoljno podataka po uzorku","Nedovoljno podataka po uzorku")
+
+```
+Svaki uzorak sadrži isto tako barem 5 mladih igrača.
+
+\vspace{1cm}
+
+Sada provodimo Lillieforseov test za svaki uzorak u svrhu testiranja njihove normalnosti.
+
+Hipoteze za svaki od 20 uzoraka mladih igrača (recimo da je P distribucija varijable):
+$$ \begin{aligned}
+H_0&: P \in \mathcal{N}( \mu, \sigma ^2) \\
+H_1&: P \notin \mathcal{N}( \mu, \sigma ^2)
+\end{aligned} $$
+
+Ispis sadrži, između ostalog, P-vrijednost testa, što je najbitnija dobivena informacija.
+\vspace{1cm}
+
+```{r}
+
+library(nortest)
+
+i = 0
+broj = 0
+for (i in imena_klubova ) {
+  broj = broj + 1
+  if(broj < 4){
+    print(broj)
+    print(lillie.test( (data_za_homoskedasticnost %>% filter(Team == i) ) $Min) )
+  }
+  if (broj == 3) {
+    cat("\n \t \t \t * * * \n\n ")
+  }
+  if (broj > 18) {
+    print(broj)
+    print( lillie.test( (data_za_homoskedasticnost %>% filter(Team == i) ) $Min) )
+  }
+}
+
+```
+
+\newpage
+
+Zbog nedovoljno jasnih saznanja iz prethodnog testiranja (nisu sve vrijednosti velike niti su sve unutar 0.05), odlučili smo provesti parametarsku inačicu anova metode i njen neparametarski paravan, Kruskal-Wallisov test. U nastavku slijede rezultati:
+
+#### 1) parametarski pristup
+
+```{r}
+aov_result <- aov(Min ~ Team, data = data_za_homoskedasticnost)
+
+summary(aov_result)
+
+```
+
+### Zaključak:
+### Budući da je P-vrijednost 0.448, prihvaćamo nul-hipotezu H0, odnosno da ne postoji statistički značajna razlika broja odigranih minuta mladih igrača među klubovima.
+
+
+#### 2) Provodimo Kruskal-Wallisov test
+```{r}
+kruskal.test(Min ~ Team, data = data_za_homoskedasticnost)
+
+```
+
+\vspace{2cm}
+
+## Zaključak oba testa je sličan. Osim što se iz dva pristupa da zaključiti da male nepravilnosti u vidu normalnosti podataka nisu suviše bitne za ANOVA pristup, i dalje tvrdimo da ne postoji statistički značajna razlika broja odigranih minuta mladih igrača među klubovima.
+
+\newpage
+
+# 2. Dobivaju li u prosjeku više žutih kartona napadači ili igrači veznog reda?
+
+#### Pozicije na koje dijelimo igrače su DF(obrana), MF(vezni igrač), FW(napadač) i GK(vratar). Pogledajmo koliko imamo igrača na kojoj poziciji
+
+```{r}
+table(data$Pos)
+```
+
+Broj žutih kartona za svakog igrača nalazi se u stupcu CrdY. Podijelimo igrače na napadače i igrače veznog reda te nađemo srednju vrijednost žutih kartona te dvije skupine. Igrače koji su i napadači i igrači veznog reda ne ubrajamo u podatke.
+
+MF = igrač veznog reda FW = napadač
+
+```{r}
+
+players_MF = data[data$Pos == "MF",]
+
+players_FW = data[data$Pos == "FW",]
+
+```
+
+Izračunamo prosječan broj žutih kartona za vezne igrače i napadače
+
+```{r}
+mean_FW=mean(players_FW$CrdY, na.rm = TRUE)
+mean_MF=mean(players_MF$CrdY, na.rm = TRUE)
+cat('Prosječan broj žutih kartona napadača', mean_FW,'\n')
+cat('Prosječan broj žutih kartona igrača veznog reda ', mean_MF, '\n')
+```
+
+Nacrtajmo box-plot podataka.
+
+```{r}
+boxplot(players_FW$CrdY, players_MF$CrdY, 
+        names = c('Broj žutih kartona napadača','Broj žutih kartona igrača veznog reda'),
+        main='Boxplot žutih kartona napadača i igrača veznog reda')
+```
+
+Iz boxplota se nazire da će igrači veznog reda imati značajno više žutih kartona od napadača, ali to moramo provjeriti t-testom. Kako bi bili sigurni da možemo provesti t-test nad ovim podatcima moramo provjeriti uvjete, odnosno pretpostavke.
+
+
+\newpage
+
+Sljedeći korak je provjeriti normalnost podataka koju najčešće provjeravamo: histogramom, qq-plotom te KS-testom (kojim provjeravamo pripadnost podataka distribuciji).
+
+Normalnost ćemo prvo provjeriti histogramima:
+
+```{r}
+hist(players_FW$CrdY, 
+     breaks=seq(min(players_FW$CrdY, na.rm=TRUE)-1 ,max(players_FW$CrdY, na.rm=TRUE)+1, 0.5),
+     main='Histogram žutih kartona napadača',
+     xlab='Broj kartona')
+hist(players_MF$CrdY, 
+     breaks=seq(min(players_MF$CrdY, na.rm=TRUE)-1 ,max(players_MF$CrdY, na.rm=TRUE)+1, 0.5),
+     main='Histogram žutih kartona igrača veznog reda',
+     xlab='Broj kartona')
+```
+
+Iz histograma odma možemo zaključiti da distribucija nije normalna. To možemo i dodatno pokazati QQ-plotom i testom za normalnost:
+
+```{r}
+qqnorm(players_FW$CrdY, pch = 1, frame = FALSE, main='Napadači')
+qqline(players_FW$CrdY, col = "steelblue", lwd = 2)
+qqnorm(players_MF$CrdY, pch = 1, frame = FALSE, main='Igrači veznog reda')
+qqline(players_MF$CrdY, col = "steelblue", lwd = 2)
+```
+
+```{r}
+library("nortest")
+lillie.test(players_FW$CrdY)
+lillie.test(players_MF$CrdY)
+```
+
+Zaključujemo da podaci ne dolaze iz normalne distribucije(vrlo mala p vrijednost)
+
+\newpage
+Zbog nenormalnosti distribucije ćemo koristiti dvostrani neparametarski Mann-Whitney-Wilcoxonov test
+$$ \begin{aligned}
+H_0&: Podaci\ dolaze\ iz\ iste\ distribucije \\
+H_1&: Podaci\ ne\ dolaze\ iz\ iste\ distribucije
+\end{aligned} $$
+
+```{r}
+wilcox.test(players_MF$CrdY, players_FW$CrdY, alternative = "two.sided")
+```
+
+\vspace{2cm}
+
+P-vrijednost jednaka je 0.001548 zbog čega odbacujemo $H_0$ hipotezu i zaključujemo da igrači veznog reda i napadači u prosjeku nemaju isti broj žutih kartona, no jos uvijek nas zanima tko dobiva više žutih kartona. Još iz histograma podataka mogli smo naslutiti da su to igrači veznog reda. To ćemo provjeriti jednostranim Mann-Whitney-Wilcoxonovim testom.
+$$ \begin{aligned}
+H_0&: M_0 = M_1 \\
+H_1&: M_0 > M_1
+\end{aligned} $$
+
+```{r}
+wilcox.test(players_MF$CrdY, players_FW$CrdY, alternative = "greater")
+```
+S obzirom na jako malu p-vrijednost (p = 0.00077) odbacujemo nul-hipotezu i zaključujemo da igrači vezni reda u prosjeku dobivaju više žutih kartona od napadača.
+
+\vspace{1cm}
+Na isto pitanje smo pokušali odgovoriti t-testom (koji je dosta robustan na nenormalnost distribucija te začuđujuće, došli smo do skoro identičnih rezultata)
+
+Varijance uzoraka:
+
+```{r}
+var_MF=var(players_MF$CrdY, na.rm=TRUE)
+var_FW=var(players_FW$CrdY, na.rm=TRUE)
+var_FW
+var_MF
+```
+
+\newpage
+Ispitujemo jednakost varijanci naših danih uzoraka.
+
+```{r}
+var.test(players_FW$CrdY, players_MF$CrdY)
+
+```
+
+\vspace{1cm}
+Dobivena p vrijednost je 0.08084 te stoga odbacujemo pretpostavku da su varijance jednake.
+
+\vspace{2cm}
+Testiramo
+$$ \begin{aligned}
+H_0&: \mu_F = \mu_M \\
+H_1&: \mu_F \neq \mu_M
+\end{aligned} $$
+
+```{r}
+t.test(players_FW$CrdY, players_MF$CrdY, alt = "two.sided", var.equal = FALSE)
+```
+
+\vspace{1cm}
+Budući da je p-vrijednost jako mala (p=0.0016), odbacujemo $H_0$ i zaključujemo da napadači ne dobivaju isti broj žutih kartona kao igrači veznog reda.
+
+\newpage
+
+Sada opet testiramo imaju li igrači veznog reda veći broj žutih kartona od napadača. $$ \begin{aligned}
+    H_0&: \mu_M = \mu_F \\
+    H_1&: \mu_M > \mu_F
+    \end{aligned} $$
+
+```{r}
+t.test(players_MF$CrdY, players_FW$CrdY, alt = "greater", var.equal = FALSE)
+```
+
+#### P-vrijednost koju dobivamo je jako mala, 0.0007969 zbog čega odbacujemo $H_0$ pretpostavku i zaključujemo da igrači veznog reda imaju veći broj žutih kartona od napadača što smo također vidjeli u box-plotu i pokazali Mann-Whitney-Wilcoxovim testom. Zanimljivo je da smo i parameterskim i neparametarskih testom dobili iste rezultate i skoro identične p vrijednosti bez obzira na nenormalnost distribucija.
+
+
+\newpage
+# 3. Možete li na temelju zadanih parametara odrediti uspješnost pojedinog igrača?
+
+
+
+Zbog velikih oscilacija u statistikama igrača koji su igrali malo utakmica, dat ćemo ocjenu samo igračima koji su odigrali više od 3 utakmice.
+
+```{r}
+modifiedData = subset(data, data$MP > 3)
+```
+
+
+
+Forumula uspješnosti za sve igrače glasi log(2* broj golova i assistencija umanjeno za broj pucanih penala u 90 minuta + broj očekivanih golova i asistencija bez penala u 90 minuta + broj startova/38 + 18/broj godina igrača). Igrači koji igraju na više pozicija ignorirani su u ovom zadataku kako bi bila očuvana nezavisnost podataka. Za kategoriju vratara nije određena formula uspješnosti zbog manjka konkretnih podataka o njihovim performansama.
+
+```{r}
+modifiedData$rating = log(2*modifiedData$G.A.PK + modifiedData$npxG.xA.1 + modifiedData$Starts/38 + 18/modifiedData$Age)
+
+forwardData = subset(modifiedData, modifiedData$Pos == 'FW')
+midfieldData = subset(modifiedData, modifiedData$Pos == 'MF')
+defenderData = subset(modifiedData, modifiedData$Pos == 'DF')
+```
+
+
+
+Prvo je prikazana statistika uspješnosti za igrače na poziciji napadača (FW). Za prikaz podataka korišten je scatter plot.
+
+```{r}
+meanRating = mean(forwardData$rating)
+plot(forwardData$rating,
+     col=ifelse(forwardData$rating>=meanRating, "blue", "red"),
+     xlim=c(1,nrow(forwardData)),
+     ylim=c(min(forwardData$rating),max(forwardData$rating)),
+     xlab='Player (FW)',
+     ylab='Rating',
+     main="Priaz uspješnosti napadača")
+
+```
+
+Svi napadači koji imaju rating veći ili jednak srednjoj vrijednosti ratinga svih napadača kategorizirani su kao uspješni igrači i označeni su plavom bojom, dok su oni neuspješni označeni crvenom bojom.
+  
+
+
+Sljedeća kategorija igrača su igrači veznog reda (MF). Kao mjeru uspješnosti uzimamo istu formulu kao i za napadače.
+
+```{r}
+meanRating = mean(midfieldData$rating)
+plot(midfieldData$rating,
+     col=ifelse(midfieldData$rating>=meanRating, "blue", "red"),
+     xlim=c(1,nrow(midfieldData)),
+     ylim=c(min(midfieldData$rating),max(midfieldData$rating)),
+     xlab='Player (MF)',
+     ylab='Rating',
+     main="Prikaz uspješnosti za igrače veznog reda")
+```
+
+
+
+Zadnju kategoriju predstavljaju obrambeni igrači.
+
+```{r}
+meanRating=mean(defenderData$rating)
+plot(defenderData$rating,
+     col=ifelse(defenderData$rating>=mean(meanRating), "blue", "red"),
+     xlim=c(1,nrow(defenderData)),
+     ylim=c(min(defenderData$rating),max(defenderData$rating)),
+     xlab='Player (DF)',
+     ylab='Rating',
+     main="Prikaz uspješnosti za obrambene igrače")
+```
+
+\newpage
+
+Sada kada smo definirali uspješnost igrača možemo odgovoriti na pitanje:
+
+
+# 4. Doprinose li sveukupnom uspjehu svoga tima više "domaći" igrači (tj. igrači engleske nacionalnosti) ili strani igrači?
+
+Prvo razdvojimo igrače prema nacionalnosti: na Engleze i strane igrače.
+
+```{r}
+dataEng = subset(modifiedData, modifiedData$Nation=="eng\xa0ENG")
+dataElse = subset(modifiedData, modifiedData$Nation!="eng\xa0ENG")
+
+```
+
+Pogledajmo jesu li te distribucije normalne histogramom, QQ-plotom i Lillieforsovom inačicom Kolmogorov-Smirnov testa. Prvo konstruiramo histograme.
+
+```{r}
+hist(dataEng$rating, xlab='rating', main='Rating engleskih igrača')
+hist(dataElse$rating, xlab='rating', main='Rating stranih igrača')
+```
+
+Na histogramima se obje populacije čine normalno distribuirane. Nacrtajmo QQ-plot
+
+```{r}
+qqnorm(dataEng$rating, pch = 1, frame = FALSE, main='Igrači engleske nacionalnosti')
+qqline(dataEng$rating, col = "red", lwd = 2)
+qqnorm(dataElse$rating, pch = 1, frame = FALSE, main='Igrači strane nacionalnosti')
+qqline(dataElse$rating, col = "red", lwd = 2)
+```
+
+Na QQ-plotu se također obje populacije čine normalno distribuirane. Za kraj provedimo Lillieforsovu inačicu Kolmogorov-Smirnov testa čija je nul hipoteza da obje populacije dolaze iz normalne distribucije.
+
+```{r}
+lillie.test(dataEng$rating)
+lillie.test(dataElse$rating)
+```
+
+Vidimo da su p-vrijednosti oba testa vrlo velike (p=0.78 i p=0.83) pa prihvaćamo hipotezu nul-hipoteza testa - da populacija dolazi iz normalne distribucije.
+
+\newpage
+Nadalje ćemo provesti t-test da testiramo hipoteze $$ \begin{aligned}
+H_0&: \mu_1 = \mu_2 \\
+H_1&: \mu_1 \neq \mu_2
+\end{aligned} $$
+
+Prije toga moramo provjeriti jednakost varijanci da znamo koji t-test koristiti. To ćemo provjeriti F-testom $$ \begin{aligned}
+H_0&: \sigma_1^{2} = \sigma_2^{2} \\
+H_1&: \sigma_1^{2} \neq \sigma_2^{2}
+\end{aligned} $$
+
+```{r}
+var.test(dataEng$rating, dataElse$rating)
+```
+
+
+\vspace{2cm}
+Zaključujemo da su varijance uspjeha stranih i domaćih igrača jednake (p=0.75). Napokon možemo odgovoriti na originalno pitanje t-testom.
+
+```{r}
+t.test(dataEng$rating, dataElse$rating, var.equal=TRUE)
+```
+
+\vspace{1cm}
+#### Zaključno,  prihvaćamo originalnu hipotezu da su strani igrači jednako uspješni kao i domaći s neprevelikom sigurnošću (p=0.1351).
